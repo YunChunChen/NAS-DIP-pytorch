@@ -15,7 +15,6 @@ from skimage.measure import compare_psnr
 from utils.denoising_utils import *
 from utils.timer import Timer
 
-
 import torch
 import torch.optim
 
@@ -39,12 +38,11 @@ def parse_args():
     parser.add_argument('--input_depth', dest='input_depth', default=32, type=int)
     parser.add_argument('--output_path', dest='output_path',default='results/denoising', type=str)
     parser.add_argument('--batch_size', dest='batch_size',default=1, type=int)
-    parser.add_argument('--net', dest='net',default='default', type=str)
     parser.add_argument('--reg_noise_std', dest='reg_noise_std', default=1./30., type=float)
     parser.add_argument('--sigma', dest='sigma', default=25, type=float)
-    parser.add_argument('--i_NAS', dest='i_NAS', default=-1, type=int)
     parser.add_argument('--save_png', dest='save_png', default=0, type=int)
     parser.add_argument('--exp_weight', dest='exp_weight', default=0.99, type=float)
+    parser.add_argument('--image_name', type=str)
 
     args = parser.parse_args()
     return args
@@ -54,168 +52,101 @@ if __name__ == '__main__':
 
     args = parse_args()
 
-    if args.net == 'default':
-        global_path = args.output_path + '_' + args.net
-        if not os.path.exists(global_path):
-            os.makedirs(global_path)
-    elif args.net == 'NAS':
-        global_path = args.output_path + '_' + args.net + '_' + str(args.i_NAS)
-        if not os.path.exists(global_path):
-            os.makedirs(global_path)
-    elif args.net == 'Multiscale':
-        from gen_skip_index import skip_index
-        skip_connect = skip_index()
-        token = skip_connect.flatten()
-        token = ''.join(str(x) for x in token)
-        global_path = args.output_path + '_' + args.net + '_' + str(args.i_NAS) + '_' + token
-        if not os.path.exists(global_path):
-            os.makedirs(global_path)
-        pickle.dump(skip_connect, open(os.path.join(global_path, 'skip_connect.pkl'), 'wb'))
+    img_path = 'data/denoising/' + args.image_name
 
-    PSNR_mat = np.empty((0, args.num_iter), dtype=np.float32)
+    img_pil = crop_image(get_image(img_path, -1)[0], 32)
+    img_np  = pil_to_np(img_pil)
 
-    # Choose figure
-    img_path_list = []
-    psnr_gt_best_list = []
+    img_noisy_pil, img_noisy_np = get_noisy_image(img_np, args.sigma / 255.)
 
-    for image_name in img_path_list:
+    if args.plot:
+        plot_image_grid([img_np, img_noisy_np], 4, 6)
 
-        if args.save_png == 1 and not os.path.exists(os.path.join(global_path, image_name)):
-            os.makedirs(os.path.join(global_path, image_name))
+    from models.model_denoising import Model
+    net = Model()
 
-        # Choose figure
-        img_path = 'data/denoising/' + image_name + '.png'
+    net = net.type(dtype)
 
-        # Add synthetic noise
-        img_pil = crop_image(get_image(img_path, -1)[0], 32)
-        img_np  = pil_to_np(img_pil) # (3, 512, 512) pixel value range: [0, 1]
+    net_input = get_noise(args.input_depth, args.noise_method, (img_pil.size[1], img_pil.size[0])).type(dtype).detach()
 
-        img_noisy_pil, img_noisy_np = get_noisy_image(img_np, args.sigma / 255.) # (3, 512, 512) [0, 1]
+    mse = torch.nn.MSELoss().type(dtype)
 
-        # Visualization
-        if args.plot:
-            plot_image_grid([img_np, img_noisy_np], 4, 6)
+    img_noisy_torch = np_to_torch(img_noisy_np).type(dtype)
 
+    net_input_saved = net_input.detach().clone()
+    noise           = net_input.detach().clone()
+    out_avg         = None
+    last_net        = None
+    psnr_noisy_last = 0
+    psnr_gt_best    = 0
 
-        from models.cross_skip import skip
-        net = skip(model_index=args.i_NAS,
-                   skip_index=skip_connect,
-                   num_input_channels=args.input_depth,
-                   num_output_channels=3,
-                   num_channels_down=[128] * 5,
-                   num_channels_up=[128] * 5,
-                   num_channels_skip=[4] * 5,
-                   upsample_mode='bilinear',
-                   downsample_mode='stride',
-                   need_sigmoid=True, 
-                   need_bias=True, 
-                   pad='reflection',
-                   act_fun='LeakyReLU')
+    i  = 0
+    PSNR_list = []
 
-        net = net.type(dtype)
+    _t = {'im_detect' : Timer(), 'misc' : Timer()}
 
-        # z torch.Size([1, 32, 512, 512])
-        net_input = get_noise(args.input_depth, args.noise_method, (img_pil.size[1], img_pil.size[0])).type(dtype).detach()
+    def closure():
 
- 
-        #dot = make_dot(net(net_input), params=dict(net.named_parameters()))
-        #dot.format = 'svg'
-        #dot.render(args.output_path + 'best_model', view=False)
-        #exit(-1)
+        global i, out_avg, psnr_noisy_last, last_net, net_input, psnr_gt_best, PSNR_list
 
-        # Compute number of parameters
-        s  = sum([np.prod(list(p.size())) for p in net.parameters()]); 
-        print ('Number of params: %d' % s)
+        _t['im_detect'].tic()
 
-        # Loss
-        mse = torch.nn.MSELoss().type(dtype)
+        if args.reg_noise_std > 0:
+            net_input = net_input_saved + (noise.normal_() * args.reg_noise_std)
 
-        # x0 torch.Size([1, 3, 512, 512])
-        img_noisy_torch = np_to_torch(img_noisy_np).type(dtype)
+        out = net(net_input)
 
-        net_input_saved = net_input.detach().clone()
-        noise           = net_input.detach().clone()
-        out_avg         = None
-        last_net        = None
-        psnr_noisy_last = 0
-        psnr_gt_best    = 0
+        if out_avg is None:
+            out_avg = out.detach()
+        else:
+            out_avg = out_avg * args.exp_weight + out.detach() * (1 - args.exp_weight)
 
-        # Main
-        i  = 0
-        PSNR_list = []
+        total_loss = mse(out, img_noisy_torch)
+        total_loss.backward()
 
-        _t = {'im_detect' : Timer(), 'misc' : Timer()}
+        psnr_noisy = compare_psnr(img_noisy_np, out.detach().cpu().numpy()[0])
+        psnr_gt    = compare_psnr(img_np, out_avg.detach().cpu().numpy()[0]) 
 
-        def closure():
+        PSNR_list.append(psnr_gt)
 
-            global i, out_avg, psnr_noisy_last, last_net, net_input, psnr_gt_best, PSNR_list
+        if psnr_gt > psnr_gt_best:
+            psnr_gt_best = psnr_gt
 
-            _t['im_detect'].tic()
+        _t['im_detect'].toc()
 
-            # Add variation
-            if args.reg_noise_std > 0:
-                net_input = net_input_saved + (noise.normal_() * args.reg_noise_std)
+        print ('Iteration %05d    Loss %f   PSNR_noisy: %f   PSNR_gt: %f    Time %.3f'  % (i, total_loss.item(), psnr_noisy, psnr_gt, _t['im_detect'].total_time), '\n', end='')
 
-            out = net(net_input)
+        if  i % args.show_every == 0:
+            out_np = torch_to_np(out)
+            if args.save_png == 1:
+                cv2.imwrite(os.path.join(global_path, image_name, str(i) + '.png'),\
+                np.clip(out_np, 0, 1).transpose(1, 2, 0)[:,:,::-1] * 255)
 
-            # Smoothing
-            if out_avg is None:
-                out_avg = out.detach()
+            if args.plot:
+                plot_image_grid([np.clip(out_np, 0, 1)], factor=4, nrow=1)
+
+        if i % args.show_every:
+            if psnr_noisy - psnr_noisy_last < -5:
+                print('Falling back to previous checkpoint.')
+
+                for new_param, net_param in zip(last_net, net.parameters()):
+                    net_param.data.copy_(new_param.cuda())
+
+                return total_loss*0
             else:
-                out_avg = out_avg * args.exp_weight + out.detach() * (1 - args.exp_weight)
+                last_net = [x.detach().cpu() for x in net.parameters()]
+                psnr_noisy_last = psnr_noisy
 
+        i += 1
 
-            total_loss = mse(out, img_noisy_torch)
-            total_loss.backward()
+        return total_loss
 
-            psnr_noisy = compare_psnr(img_noisy_np, out.detach().cpu().numpy()[0])
-            psnr_gt    = compare_psnr(img_np, out_avg.detach().cpu().numpy()[0]) 
+    p = get_params('net', net, net_input)
+    optimize(args.optimizer, p, closure, args.lr, args.num_iter)
 
-            PSNR_list.append(psnr_gt)
+    PSNR_mat  = np.concatenate((PSNR_mat, np.array(PSNR_list).reshape(1,args.num_iter)), axis=0)
+    pickle.dump( PSNR_mat, open( os.path.join(global_path, 'PSNR.pkl'), "wb" ) )
 
-            if psnr_gt > psnr_gt_best:
-                psnr_gt_best = psnr_gt
-
-            _t['im_detect'].toc()
-
-            print ('Iteration %05d    Loss %f   PSNR_noisy: %f   PSNR_gt: %f    Time %.3f'  % (i, total_loss.item(), psnr_noisy, psnr_gt, _t['im_detect'].total_time), '\n', end='')
-
-            if  i % args.show_every == 0:
-                out_np = torch_to_np(out)
-                if args.save_png == 1:
-                    cv2.imwrite(os.path.join(global_path, image_name, str(i) + '.png'),\
-                    np.clip(out_np, 0, 1).transpose(1, 2, 0)[:,:,::-1] * 255)
-
-                if args.plot:
-                    plot_image_grid([np.clip(out_np, 0, 1)], factor=4, nrow=1)
-
-            # Backtracking
-            if i % args.show_every:
-                if psnr_noisy - psnr_noisy_last < -5:
-                    print('Falling back to previous checkpoint.')
-
-                    for new_param, net_param in zip(last_net, net.parameters()):
-                        net_param.data.copy_(new_param.cuda())
-
-                    return total_loss*0
-                else:
-                    last_net = [x.detach().cpu() for x in net.parameters()]
-                    psnr_noisy_last = psnr_noisy
-
-            i += 1
-
-            return total_loss
-
-        p = get_params('net', net, net_input)
-        optimize(args.optimizer, p, closure, args.lr, args.num_iter)
-
-        PSNR_mat  = np.concatenate((PSNR_mat, np.array(PSNR_list).reshape(1,args.num_iter)), axis=0)
-        pickle.dump( PSNR_mat, open( os.path.join(global_path, 'PSNR.pkl'), "wb" ) )
-
-        psnr_gt_best_list.append(psnr_gt_best)
+    psnr_gt_best_list.append(psnr_gt_best)
 
     print('Finish optimization\n')
-
-    for idx, image_name in enumerate(img_path_list):
-        print ('Image: %8s   PSNR: %.2f'  % (image_name, psnr_gt_best_list[idx]), '\n', end='')
-    print ('Averaged PSNR: %.2f'  % (np.mean(psnr_gt_best_list)), '\n', end='')

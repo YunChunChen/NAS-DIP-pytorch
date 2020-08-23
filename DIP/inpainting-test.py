@@ -1,6 +1,5 @@
 from __future__ import print_function
-import matplotlib
-%matplotlib inline
+#import matplotlib
 #matplotlib.use('agg')
 #import matplotlib.pyplot as plt
 
@@ -46,12 +45,9 @@ if __name__ == '__main__':
 
     args = parse_args()
 
-    # Choose figure
     img_path = 'data/inpainting/' + args.image_name
 
-    # Load image
     img_pil, img_np = get_image(img_path, -1)
-    #img_np          = nn.ReflectionPad2d(1)(np_to_torch(img_np))[0].numpy()
     img_pil         = np_to_pil(img_np)
 
     img_mask    = get_bernoulli_mask(img_pil, 0.50)

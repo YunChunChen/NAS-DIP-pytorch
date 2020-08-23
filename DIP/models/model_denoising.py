@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
 from .common import *
-import ipdb
 
-from NAS import gen_upsample_layer
+import models.gen_upsample_layer
+
+
 
 class OutputBlock(nn.Module):
 
@@ -51,7 +52,7 @@ class UpsampleBlock(nn.Module):
         
         super(UpsampleBlock, self).__init__()
 
-        self.op = gen_upsample_layer.gen_layer(
+        self.op = models.gen_upsample_layer.gen_layer(
             C_in=in_channel,                            
             C_out=out_channel,
             model_index=model_index
@@ -181,25 +182,24 @@ class DecoderBlock(nn.Module):
 class Model(nn.Module):
 
     def __init__(self,
+                 model_index=158,
                  num_input_channels=32,
-                 num_output_channels=1,
+                 num_output_channels=3,
                  num_channels_down=[128, 128, 128, 128, 128],
                  num_channels_up=[128, 128, 128, 128, 128],
                  num_channels_skip=[4, 4, 4, 4, 4],
                  filter_size_down=3,
                  filter_size_up=3,
                  filter_skip_size=1,
-                 model_index=86,
                  need_sigmoid=True,
                  need_bias=True,
                  pad='reflection',
+                 upsample_mode='nearest',
                  downsample_mode='stride',
                  act_fun='LeakyReLU',
                  need1x1_up=True):
 
         super(Model, self).__init__()
-
-        self.skip_index = skip_index
 
         self.enc1 = EncoderBlock(in_channel=num_input_channels,                      
                                  out_channel=num_channels_down[0], 
@@ -393,28 +393,25 @@ class Model(nn.Module):
 
     def forward(self, data):
 
-        """ Encoder """
         enc1 = self.enc1(data)   # H/2  x W/2  x 128
         enc2 = self.enc2(enc1)   # H/4  x W/4  x 128
         enc3 = self.enc3(enc2)   # H/8  x W/8  x 128
         enc4 = self.enc4(enc3)   # H/16 x W/16 x 128
         enc5 = self.enc5(enc4)   # H/32 x W/32 x 128
 
-
-        """ Decoder  """
-        add5 = self.up5(enc5) + self.skip_down_4_5(self.skip_down_3_4(enc2)) + self.skip5(enc4)
+        add5 = self.up5(enc5) + self.skip5(enc4)
         dec5 = self.dec5(add5)
 
-        add4 = self.up4(dec5) + self.skip_down_3_4(self.skip_down_2_3(enc1)) + self.skip4(enc3) + self.skip_up_5_4(enc4)
+        add4 = self.up4(dec5) + self.skip4(enc3) + self.skip_up_5_4(enc4)
         dec4 = self.dec4(add4)
 
-        add3 = self.up3(dec4) + self.skip_down_2_3(self.skip_down_1_2(data)) + self.skip3(enc2) + self.skip_up_4_3(enc3)
+        add3 = self.up3(dec4) + self.skip3(enc2) + self.skip_up_4_3(enc3) + self.skip_up_4_3(self.skip_up_5_4(enc4))
         dec3 = self.dec3(add3)
 
-        add2 = self.up2(dec3) + self.skip2(enc1) + self.skip_up_3_2(enc2)
+        add2 = self.up2(dec3) + self.skip2(enc1) + self.skip_up_3_2(enc2) + self.skip_up_3_2(self.skip_up_4_3(enc3)) + self.skip_up_3_2(self.skip_up_4_3(self.skip_up_5_4(enc4)))
         dec2 = self.dec2(add2)
 
-        add1 = self.up1(dec2) + self.skip1(data) + self.skip_up_2_1(enc1)
+        add1 = self.up1(dec2) + self.skip1(data) + self.skip_up_2_1(enc1) + self.skip_up_2_1(self.skip_up_3_2(enc2)) + self.skip_up_2_1(self.skip_up_3_2(self.skip_up_4_3(enc3))) + self.skip_up_2_1(self.skip_up_3_2(self.skip_up_4_3(self.skip_up_5_4(enc4))))
         dec1 = self.dec1(add1)
 
         out = self.output(dec1)
