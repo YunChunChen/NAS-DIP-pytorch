@@ -177,13 +177,13 @@ class DecoderBlock(nn.Module):
         return self.op(data)
 
 
-class skip(nn.Module):
+class Model(nn.Module):
 
     def __init__(self,
                  model_index=119,
                  num_input_channels=32,
                  num_output_channels=3,
-                 num_channels_down=[128, 128, 124, 128, 128],
+                 num_channels_down=[128, 128, 128, 128, 128],
                  num_channels_up=[128, 128, 128, 128, 128],
                  num_channels_skip=[4, 4, 4, 4, 4],
                  filter_size_down=3,
@@ -197,7 +197,7 @@ class skip(nn.Module):
                  act_fun='LeakyReLU',
                  need1x1_up=True):
 
-        super(skip, self).__init__()
+        super(Model, self).__init__()
 
         self.enc1 = EncoderBlock(in_channel=num_input_channels,                      
                                  out_channel=num_channels_down[0], 
