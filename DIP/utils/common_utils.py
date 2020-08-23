@@ -7,7 +7,6 @@ import numpy as np
 from PIL import Image
 import PIL
 import numpy as np
-import ipdb
 import matplotlib.pyplot as plt
 
 def crop_image(img, d=32):
