@@ -50,7 +50,7 @@ if __name__ == '__main__':
 
     # Load image
     img_pil, img_np = get_image(img_path, -1)
-    img_np          = nn.ReflectionPad2d(1)(np_to_torch(img_np))[0].numpy()
+    #img_np          = nn.ReflectionPad2d(1)(np_to_torch(img_np))[0].numpy()
     img_pil         = np_to_pil(img_np)
 
     img_mask    = get_bernoulli_mask(img_pil, 0.50)

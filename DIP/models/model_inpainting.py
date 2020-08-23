@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from .common import *
 
-import .gen_upsample_layer
+import models.gen_upsample_layer
 
 class OutputBlock(nn.Module):
 
@@ -50,7 +50,7 @@ class UpsampleBlock(nn.Module):
         
         super(UpsampleBlock, self).__init__()
 
-        self.op = gen_upsample_layer.gen_layer(
+        self.op = models.gen_upsample_layer.gen_layer(
             C_in=in_channel,                            
             C_out=out_channel,
             model_index=model_index
@@ -197,8 +197,6 @@ class Model(nn.Module):
                  need1x1_up=True):
 
         super(Model, self).__init__()
-
-        self.skip_index = skip_index
 
         self.enc1 = EncoderBlock(in_channel=num_input_channels,                      
                                  out_channel=num_channels_down[0], 
