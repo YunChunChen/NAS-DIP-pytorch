@@ -1,9 +1,8 @@
 import torch
 import torch.nn as nn
 from .common import *
-import ipdb
 
-from NAS import gen_upsample_layer
+import gen_upsample_layer
 
 class OutputBlock(nn.Module):
 
