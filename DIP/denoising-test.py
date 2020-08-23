@@ -59,9 +59,6 @@ if __name__ == '__main__':
 
     img_noisy_pil, img_noisy_np = get_noisy_image(img_np, args.sigma / 255.)
 
-    if args.plot:
-        plot_image_grid([img_np, img_noisy_np], 4, 6)
-
     from models.model_denoising import Model
     net = Model()
 
